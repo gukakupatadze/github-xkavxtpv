@@ -1,6 +1,6 @@
 """
 DataLab Georgia FastAPI Server
-Migrated from MongoDB to PostgreSQL
+Production-ready FastAPI server with PostgreSQL
 """
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException
@@ -11,17 +11,10 @@ from starlette.middleware.cors import CORSMiddleware
 import os
 import logging
 from pathlib import Path
-from pydantic import BaseModel, Field
-from typing import List
-import uuid
-from datetime import datetime
-
-# PostgreSQL imports
-from database import get_session, init_db, close_db
-from sqlalchemy.ext.asyncio import AsyncSession
 
 # Import PostgreSQL route modules
 from routes import service_requests_pg, contact_pg, price_estimate_pg, testimonials_pg
+from database import get_session, init_db, close_db
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -29,7 +22,7 @@ load_dotenv(ROOT_DIR / '.env')
 # Create the main app
 app = FastAPI(
     title="DataLab Georgia API",
-    description="Data Recovery Service API - PostgreSQL Version",
+    description="Data Recovery Service API",
     version="2.0.0"
 )
 
@@ -45,28 +38,29 @@ app.add_middleware(
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
 
-# Health check models
-class StatusCheck(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
-
-class StatusCheckCreate(BaseModel):
-    client_name: str
-
 # Health check endpoints
 @api_router.get("/")
 async def root():
-    return {"message": "DataLab Georgia API is running", "status": "healthy", "database": "PostgreSQL"}
+    return {
+        "message": "DataLab Georgia API is running", 
+        "status": "healthy", 
+        "database": "PostgreSQL",
+        "version": "2.0.0"
+    }
 
 @api_router.get("/health")
-async def health_check(session: AsyncSession = Depends(get_session)):
+async def health_check():
     """Health check with database connectivity verification"""
     try:
-        # Test database connection
+        from database import get_session
+        from sqlalchemy.ext.asyncio import AsyncSession
         from sqlalchemy.sql import text
-        result = await session.execute(text("SELECT 1"))
-        db_status = "connected" if result else "disconnected"
+        
+        # Get a session for testing
+        async for session in get_session():
+            result = await session.execute(text("SELECT 1"))
+            db_status = "connected" if result else "disconnected"
+            break
         
         return {
             "status": "healthy",
@@ -75,21 +69,49 @@ async def health_check(session: AsyncSession = Depends(get_session)):
         }
     except Exception as e:
         return {
-            "status": "unhealthy",
+            "status": "unhealthy", 
             "database": "disconnected",
             "error": str(e),
             "timestamp": datetime.utcnow().isoformat()
         }
 
 @api_router.post("/status-check")
-async def create_status_check(status_check: StatusCheckCreate):
+async def create_status_check(data: dict):
     """Simple status check endpoint for monitoring"""
+    from datetime import datetime
+    import uuid
+    
     return {
         "id": str(uuid.uuid4()),
-        "client_name": status_check.client_name,
+        "client_name": data.get("client_name", "unknown"),
         "timestamp": datetime.utcnow().isoformat(),
         "status": "received"
     }
+
+@api_router.get("/health")
+async def health_check_simple():
+    """Simple health check without database dependency"""
+    try:
+        # Test database connection
+        from database import engine
+        from sqlalchemy.sql import text
+        
+        async with engine.begin() as conn:
+            result = await conn.execute(text("SELECT 1"))
+            db_status = "connected" if result else "disconnected"
+        
+        return {
+            "status": "healthy",
+            "database": db_status,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "database": "disconnected",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
 
 # Include all route modules
 api_router.include_router(service_requests_pg.router, prefix="/service-requests", tags=["service-requests"])

@@ -1,12 +1,13 @@
 """
 PostgreSQL Database Connection and Session Management
-DataLab Georgia - Migration from MongoDB to PostgreSQL
+DataLab Georgia - Production Database Configuration
 """
 
 import os
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
 from dotenv import load_dotenv
+import logging
 
 # Load environment variables
 load_dotenv()
@@ -17,11 +18,19 @@ POSTGRES_URL = os.environ.get(
     'postgresql+asyncpg://datalab_user:datalab_pass123@localhost:5432/datalab_georgia'
 )
 
+# Validate connection string
+if not POSTGRES_URL:
+    raise ValueError("POSTGRES_URL environment variable is required")
+
 # Create async engine
 engine = create_async_engine(
     POSTGRES_URL,
-    echo=True,  # Set to False in production
-    future=True
+    echo=False,  # Disable SQL logging in production
+    future=True,
+    pool_size=10,
+    max_overflow=20,
+    pool_pre_ping=True,
+    pool_recycle=3600
 )
 
 # Create async session maker
@@ -39,14 +48,27 @@ async def get_session():
     async with AsyncSessionLocal() as session:
         try:
             yield session
+        except Exception as e:
+            await session.rollback()
+            logging.error(f"Database session error: {e}")
+            raise
         finally:
             await session.close()
 
 async def init_db():
     """Initialize database tables"""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logging.info("Database tables initialized successfully")
+    except Exception as e:
+        logging.error(f"Failed to initialize database: {e}")
+        raise
 
 async def close_db():
     """Close database connections"""
-    await engine.dispose()
+    try:
+        await engine.dispose()
+        logging.info("Database connections closed successfully")
+    except Exception as e:
+        logging.error(f"Error closing database connections: {e}")
